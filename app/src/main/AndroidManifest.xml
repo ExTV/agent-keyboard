@@ -8,6 +8,15 @@
     <!-- Permission needed to create notifications on devices running Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- Agent Keyboard API: signature-protected permission. Only apps signed with
+         the same key as this keyboard can bind to KeyboardApiService and drive
+         the IME programmatically. -->
+    <permission
+        android:name="dev.patrickgold.florisboard.permission.AGENT_KEYBOARD_API"
+        android:protectionLevel="signature"
+        android:label="@string/floris_app_name"/>
+    <uses-permission android:name="dev.patrickgold.florisboard.permission.AGENT_KEYBOARD_API"/>
+
     <!-- Android 11+ only: Define that FlorisBoard requests to see all apps that
           ship with an IME or Spell Check service. This is used to guide the user
           in the Settings Ui why FlorisBoard may not be working.
@@ -48,6 +57,17 @@
                 <action android:name="android.view.InputMethod"/>
             </intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/method"/>
+        </service>
+
+        <!-- Agent Keyboard API service: bound by agent apps to drive the IME via AIDL.
+             Protected by a signature-level permission so only co-signed apps can bind. -->
+        <service
+            android:name="dev.patrickgold.florisboard.api.KeyboardApiService"
+            android:permission="dev.patrickgold.florisboard.permission.AGENT_KEYBOARD_API"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="dev.patrickgold.florisboard.api.action.BIND"/>
+            </intent-filter>
         </service>
 
         <!-- Spellchecker service -->

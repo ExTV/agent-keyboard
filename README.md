@@ -1,121 +1,102 @@
 <img align="left" width="80" height="80"
 src=".github/repo_icon.png" alt="App icon">
 
-# FlorisBoard [![Crowdin](https://badges.crowdin.net/florisboard/localized.svg)](https://crowdin.florisboard.org) [![Matrix badge](https://img.shields.io/badge/chat-%23florisboard%3amatrix.org-blue)](https://matrix.to/#/#florisboard:matrix.org) [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md) [![FlorisBoard CI](https://github.com/florisboard/florisboard/actions/workflows/android.yml/badge.svg?event=push)](https://github.com/florisboard/florisboard/actions/workflows/android.yml)
+# agent-keyboard
 
-**FlorisBoard** is a free and open-source keyboard for Android 8.0+
-devices. It aims at being modern, user-friendly and customizable while
-fully respecting your privacy. Currently in beta state.
+**agent-keyboard** is an Android IME — a full keyboard you can use day-to-day —
+that also exposes a **secure AIDL API** so a co-signed agent app can type,
+read, and navigate the active text field in any app, on any screen, without
+needing an Accessibility Service.
 
-<table>
-<tr>
-<th style="text-align: center; width: 50%">
-<h3>Stable <a href="https://github.com/florisboard/florisboard/releases/latest"><img alt="Latest stable release" src="https://img.shields.io/github/v/release/florisboard/florisboard?sort=semver&display_name=tag&color=28a745"></a></h3>
-</th>
-<th style="text-align: center; width: 50%">
-<h3>Preview <a href="https://github.com/florisboard/florisboard/releases"><img alt="Latest preview release" src="https://img.shields.io/github/v/release/florisboard/florisboard?include_prereleases&sort=semver&display_name=tag&color=fd7e14"></a></h3>
-</th>
-</tr>
-<tr>
-<td style="vertical-align: top">
-<p><i>Major versions only</i><br><br>Updates are more polished, new features are matured and tested through to ensure a stable experience.</p>
-</td>
-<td style="vertical-align: top">
-<p><i>Major + Alpha/Beta/Rc versions</i><br><br>Updates contain new features that may not be fully matured yet and bugs are more likely to occur. Allows you to give early feedback.</p>
-</td>
-</tr>
-<tr>
-<td style="vertical-align: top">
-<p>
-<a href="https://apt.izzysoft.de/fdroid/index/apk/dev.patrickgold.florisboard"><img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroid.png" height="64" alt="IzzySoft repo badge"></a>
-<a href="https://f-droid.org/packages/dev.patrickgold.florisboard"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" height="64" alt="F-Droid badge"></a>
-</p>
-<p>
+It is a fork of [FlorisBoard](https://github.com/florisboard/florisboard).
+All upstream keyboard behaviour (layouts, themes, clipboard manager, emoji
+panel, extensions, etc.) is preserved unchanged. The only addition is the
+agent API backend.
 
-**Google Play**: Join the [FlorisBoard Test Group](https://groups.google.com/g/florisboard-closed-beta-test), then visit the [testing page](https://play.google.com/apps/testing/dev.patrickgold.florisboard). Once joined and installed, updates will be delivered like for any other app. ([Store entry](https://play.google.com/store/apps/details?id=dev.patrickgold.florisboard))
+## Why a keyboard?
 
-</p>
-<p>
+The keyboard is the canonical Android entry point for writing into a text
+field: as the active IME you already hold a live `InputConnection` for the
+focused editor. Routing agent input through the IME means no Accessibility
+Service, no overlay tricks, no per-app integrations — if the field accepts
+typing, the agent can drive it.
 
-**Obtainium**: [Auto-import stable config][obtainium_stable]
+## API surface
 
-</p>
-<p>
+AIDL is defined in
+[`IKeyboardApi.aidl`](app/src/main/aidl/dev/patrickgold/florisboard/api/IKeyboardApi.aidl):
 
-**Manual**: Download and install the APK from the release page.
+| Method | Purpose |
+| --- | --- |
+| `connect()` | Handshake. Returns a session token. |
+| `getApiVersion()` | Protocol version. |
+| `typeText(token, text)` | Commit text into the active field. |
+| `pressKey(token, keyCode)` | Send a `KeyEvent` (e.g. `KEYCODE_ENTER`). |
+| `deleteChars(token, count)` | Delete N chars backward. |
+| `clearField(token)` | Empty the field. |
+| `getCurrentText(token)` | Return full field contents. |
+| `getSelectedText(token)` | Return current selection. |
+| `getEditorInfo(token)` | Hint, input type, package name, password flag, selection. |
+| `setCursorPosition(token, pos)` | Move the caret. |
+| `selectRange(token, start, end)` | Select a range. |
 
-</p>
-</td>
-<td style="vertical-align: top">
-<p><a href="https://apt.izzysoft.de/fdroid/index/apk/dev.patrickgold.florisboard.beta"><img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroid.png" height="64" alt="IzzySoft repo badge"></a></p>
-<p>
+## Security model
 
-**Google Play**: Join the [FlorisBoard Test Group](https://groups.google.com/g/florisboard-closed-beta-test), then visit the [preview testing page](https://play.google.com/apps/testing/dev.patrickgold.florisboard.beta). Once joined and installed, updates will be delivered like for any other app. ([Store entry](https://play.google.com/store/apps/details?id=dev.patrickgold.florisboard.beta))
+| Layer | Mechanism |
+| --- | --- |
+| **Caller identity** | `signature`-level permission `dev.patrickgold.florisboard.permission.AGENT_KEYBOARD_API`. Only apps signed with the same key as the keyboard can bind. Enforced by the OS. |
+| **Session binding** | A fresh token is issued per bind via `connect()` and required on every subsequent call. Tokens are revoked when the binding drops. |
+| **Rate limiting** | Token-bucket limiter, 120 chars/s sustained, 240 burst — bounds runaway agents. |
+| **Field sensitivity** | Password and other sensitive input types are refused. The agent gets a clear `false` / `null` back. |
 
-</p>
-<p>
+## Connecting from an agent app
 
-**Obtainium**: [Auto-import preview config][obtainium_preview]
+The agent app must:
 
-</p>
-<p>
+1. Be signed with the same keystore as `agent-keyboard`.
+2. Declare `<uses-permission android:name="dev.patrickgold.florisboard.permission.AGENT_KEYBOARD_API"/>`.
+3. Ship a copy of the `.aidl` files under the same package path
+   (`dev/patrickgold/florisboard/api/`).
+4. Bind to the service:
 
-**Manual**: Download and install the APK from the release page.
+```kotlin
+val intent = Intent("dev.patrickgold.florisboard.api.action.BIND").apply {
+    setPackage("dev.patrickgold.florisboard")
+}
+context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+```
 
-</p>
-</td>
-</tr>
-</table>
+5. In `onServiceConnected`, call `IKeyboardApi.Stub.asInterface(binder).connect()`
+   and reuse the returned token on subsequent calls.
 
-Beginning with v0.7 FlorisBoard will enter the public beta on Google Play.
+The IME must, of course, be set as the user's active keyboard for any of the
+text actions to take effect.
 
-## Highlighted features
-- Integrated clipboard manager / history
-- Advanced theming support and customization
-- Integrated extension support (still evolving)
-- Emoji keyboard / history / suggestions
+## Building
 
-> [!IMPORTANT]
-> Word suggestions/spell checking are not included in the current releases
-> and are a major goal for the v0.6 milestone.
+Standard Gradle build, same toolchain as upstream FlorisBoard:
 
-Feature roadmap: See [ROADMAP.md](ROADMAP.md)
+```
+./gradlew :app:assembleDebug
+```
 
-## Contributing
-Want to contribute to FlorisBoard? That's great to hear! There are lots of
-different ways to help out, please see the [contribution guidelines](CONTRIBUTING.md) for more info.
+The agent API service is included in every build variant.
 
-## Addons Store
-The official [Addons Store](https://beta.addons.florisboard.org) offers the possibility for the community to share and download FlorisBoard extensions.
-Instructions on how to publish addons can be found [here](https://github.com/florisboard/florisboard/wiki/How-to-publish-on-FlorisBoard-Addons).
+---
 
-Many thanks to Ali ([@4H1R](https://github.com/4H1R)) for implementing the store!
+## Credits
 
-> [!NOTE]
-> During the initial beta release phase, the Addons Store _will_ only accept theme extensions.
-> Later on we plan to add support for language packs and keyboard extensions.
+This project is a fork of **FlorisBoard**, a free and open-source keyboard
+for Android by [patrickgold](https://github.com/patrickgold) and
+[The FlorisBoard Contributors](https://github.com/florisboard/florisboard/graphs/contributors).
+All keyboard functionality in this repo — layouts, themes, clipboard manager,
+emoji handling, extensions, spell checking, the entire IME pipeline — is
+their work. The agent-keyboard fork only adds the AIDL API backend on top.
 
-## List of permissions FlorisBoard requests
-Please refer to this [page](https://github.com/florisboard/florisboard/wiki/List-of-permissions-FlorisBoard-requests)
-to get more information on this topic.
+Upstream project: <https://github.com/florisboard/florisboard>
 
-## APK signing certificate hashes
+### Used libraries, components and icons (from upstream)
 
-The package names and SHA-256 hashes of the signature certificate are listed below, so you can verify both FlorisBoard variants with apksigner by using `apksigner verify --print-certs florisboard-<version>-<track>.apk` when you download the APK.
-If you have [AppVerifier](https://github.com/soupslurpr/AppVerifier) installed, you can alternatively copy both the package name and the hash of the corresponding track and share them to AppVerifier.
-
-##### Stable track:
-
-dev.patrickgold.florisboard<br>
-0B:80:71:64:50:8E:AF:EB:1F:BB:81:5B:E7:A2:3C:77:FE:68:9D:94:B1:43:75:C9:9B:DA:A9:B6:57:7F:D6:D6
-
-##### Preview track:
-
-dev.patrickgold.florisboard.beta<br>
-0B:80:71:64:50:8E:AF:EB:1F:BB:81:5B:E7:A2:3C:77:FE:68:9D:94:B1:43:75:C9:9B:DA:A9:B6:57:7F:D6:D6
-
-
-## Used libraries, components and icons
 * [AndroidX libraries](https://github.com/androidx/androidx) by
   [Android Jetpack](https://github.com/androidx)
 * [AboutLibraries](https://github.com/mikepenz/AboutLibraries) by
@@ -129,11 +110,13 @@ dev.patrickgold.florisboard.beta<br>
 * [KotlinX serialization library](https://github.com/Kotlin/kotlinx.serialization) by
   [Kotlin](https://github.com/Kotlin)
 
-Many thanks to [Nikolay Anzarov](https://www.behance.net/nikolayanzarov) ([@BloodRaven0](https://github.com/BloodRaven0)) for designing and providing the main app icons to this project!
+Many thanks to [Nikolay Anzarov](https://www.behance.net/nikolayanzarov) ([@BloodRaven0](https://github.com/BloodRaven0)) for designing and providing the main app icons to the upstream project.
 
 ## License
+
 ```
 Copyright 2020-2026 The FlorisBoard Contributors
+Copyright 2026 ExTV (agent-keyboard fork)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -148,11 +131,4 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-Thanks to [The FlorisBoard Contributors](https://github.com/florisboard/florisboard/graphs/contributors) for making this project possible!
-
-<!-- BEGIN SECTION: obtainium_links -->
-<!-- auto-generated link templates, do NOT edit by hand -->
-<!-- see fastlane/update-readme.sh -->
-[obtainium_preview]: https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://app/%7B%22id%22%3A%22dev.patrickgold.florisboard.beta%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fflorisboard%2Fflorisboard%22%2C%22author%22%3A%22florisboard%22%2C%22name%22%3A%22FlorisBoard%20Preview%22%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Atrue%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22preview%5C%22%7D%22%7D%0A
-[obtainium_stable]: https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://app/%7B%22id%22%3A%22dev.patrickgold.florisboard%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fflorisboard%2Fflorisboard%22%2C%22author%22%3A%22florisboard%22%2C%22name%22%3A%22FlorisBoard%20Stable%22%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Afalse%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22stable%5C%22%7D%22%7D%0A
-<!-- END SECTION: obtainium_links -->
+Thanks to [The FlorisBoard Contributors](https://github.com/florisboard/florisboard/graphs/contributors) for making this project possible.
