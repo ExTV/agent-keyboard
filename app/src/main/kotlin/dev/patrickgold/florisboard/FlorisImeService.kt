@@ -95,6 +95,10 @@ class FlorisImeService : LifecycleInputMethodService() {
             return FlorisImeServiceReference.get()?.currentInputConnection
         }
 
+        fun currentInputEditorInfo(): EditorInfo? {
+            return FlorisImeServiceReference.get()?.currentInputEditorInfo
+        }
+
         fun inputFeedbackController(): InputFeedbackController? {
             return FlorisImeServiceReference.get()?.inputFeedbackController
         }
