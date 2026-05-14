@@ -17,6 +17,8 @@
 import com.android.build.api.dsl.ApplicationExtension
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.agp.application)
@@ -101,6 +103,44 @@ configure<ApplicationExtension> {
         compose = true
     }
 
+    signingConfigs {
+        // Co-signed with rikkahub's release keystore. The main rikkahub app
+        // (me.rerere.rikkahub) binds agent-keyboard's signature-permission-level
+        // AIDL API, which the OS only permits when both APKs are signed with the
+        // same key. Credentials are read from local.properties (git-ignored) so
+        // no passwords land in a tracked file.
+        val localProperties = Properties()
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localProperties.load(FileInputStream(localPropertiesFile))
+        }
+        val storeFilePath = localProperties.getProperty("storeFile")
+        val storePasswordValue = localProperties.getProperty("storePassword")
+        val keyAliasValue = localProperties.getProperty("keyAlias")
+        val keyPasswordValue = localProperties.getProperty("keyPassword")
+        val hasSigningProps = storeFilePath != null && storePasswordValue != null &&
+            keyAliasValue != null && keyPasswordValue != null
+
+        create("release") {
+            if (hasSigningProps) {
+                storeFile = file(storeFilePath!!)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
+        }
+        // Repoint the AGP-provided debug config at the same key so debug-vs-debug
+        // testing of the AIDL bind also works.
+        getByName("debug") {
+            if (hasSigningProps) {
+                storeFile = file(storeFilePath!!)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
+        }
+    }
+
     buildTypes {
         named("debug") {
             applicationIdSuffix = ".debug"
@@ -122,6 +162,7 @@ configure<ApplicationExtension> {
         named("release") {
             versionNameSuffix = projectVersionNameSuffix
 
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             isMinifyEnabled = true
             isShrinkResources = true
